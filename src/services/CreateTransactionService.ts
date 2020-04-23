@@ -1,51 +1,58 @@
-// import AppError from '../errors/AppError';
-import { getRepository } from 'typeorm';
+import AppError from '../errors/AppError';
+import { getCustomRepository, getRepository } from 'typeorm';
 
 import Transaction from '../models/Transaction';
 import Category from '../models/Category';
 
+import TransactionsRepository from '../repositories/TransactionsRepository';
+
 interface Request {
   title: string;
+  type: 'income' | 'outcome';
   value: number;
-  type: 'outcome' | 'income';
   category: string;
 }
 
 class CreateTransactionService {
-  public async execute({
-    title,
-    value,
-    type,
-    category,
-  }: Request): Promise<Transaction> {
-    const transactionRepository = getRepository(Transaction);
-    const categoryRepository = getRepository(Category);
+  public async execute({title, type, value, category}: Request): Promise<Transaction> {
+    const transactionsRepository = getCustomRepository(TransactionsRepository);
+    const categoriesRepository   = getRepository(Category);
 
-    let fetchCategory = await categoryRepository.findOne({
-      where: { title: category },
-    });
+    if(type != 'income' && type != 'outcome') {
+      throw new AppError('type must be income or outcome!');
+    }
+    if(type === 'outcome') {
 
-    // criar uma nova categoria.
-    if (!fetchCategory) {
-      const newCategory = categoryRepository.create({
-        title: category,
-      });
-      await categoryRepository.save(newCategory);
-      fetchCategory = newCategory;
+      const canOutcome = await transactionsRepository.getBalance();
+
+      if(canOutcome.total - value < 0) {
+        throw new AppError('Outcome cannot be minor than your total amount!');
+      }
     }
 
-    const transaction = transactionRepository.create({
+
+    let categoryExists = await categoriesRepository.findOne({
+      where: {title: category}
+    })
+
+    if(!categoryExists) {
+      categoryExists = await categoriesRepository.create({
+        title: category
+      });
+
+      await categoriesRepository.save(categoryExists);
+    }
+
+    const newTransaction = await transactionsRepository.create({
       title,
-      value,
       type,
-      category_id: fetchCategory.id,
+      value,
+      category: categoryExists
     });
 
-    await transactionRepository.save(transaction);
+    await transactionsRepository.save(newTransaction);
 
-    transaction.category = fetchCategory;
-
-    return transaction;
+    return newTransaction;
   }
 }
 
